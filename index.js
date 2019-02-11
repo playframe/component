@@ -33,7 +33,7 @@
 //   Component({
 //     seconds: 0
 //     _: {
-//       reset: ()=> seconds: 0
+//       reset: ()=> {seconds: 0}
 //       increment: (x, state)=> {
 //         state.seconds++
 //         setTimeout(state._.increment, 1000 - Date.now() % 1000)

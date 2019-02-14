@@ -26,6 +26,7 @@
   "homepage": "https://github.com/playframe/component#readme",
   "peerDependencies": {
     "@playframe/h": "^1.0.0",
+    "@playframe/evolve": "^1.0.0",
     "@playframe/statue": "^1.0.1"
   },
   "devDependencies": {

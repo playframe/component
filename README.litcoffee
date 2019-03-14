@@ -104,121 +104,72 @@ How about using a tree of
 [WeakMap](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap)
 instances to cache our Component instances by `mkey`?
 This allows us to cache our components aggresively because our `_cache`
-will be cleaned automatically by Garbage Collector if `s_a`, `view` or
-`mkey` gets dereferenced
-
-    _cache = new WeakMap
-
-    get = (s_a, view, mkey)=>
-      (by_actions = _cache.get s_a) or _cache.set s_a, by_actions = new WeakMap
-      (by_view = by_actions.get view) or by_actions.set view, by_view = new WeakMap
-      by_view.get mkey
-
-    set = (s_a, view, mkey, Component)=>
-      _cache
-        .get s_a
-        .get view
-        .set mkey, Component
+will be cleaned automatically by Garbage Collector if `mkey` gets dereferenced
 
 Let's export a higher order function that takes `sync` engine,
 `state_actions` for statue and a pure `view` function.
 
-    module.exports = (sync)=>(state_actions)=>(view)=>(upgrade)=>
+    module.exports = (sync)=>(state_actions)=>(view)=> _cache = new WeakMap; (upgrade)=>
       if (mkey = upgrade and upgrade.mkey) and
-          Component = get view, state_actions, mkey
+          Component = _cache.get mkey
         return Component
 
-      _v_root = null
       _v_dom = null
       _props = null
-      _scheduled = false
       _rendering = false
       _state = evolve state_actions, upgrade
 
 Creating a statue that will deliver the latest state on
-`sync.finally` and will schedule render
+`sync.render` and patch shadow DOM if needed
 
-      update = (f)=>
-        if _rendering
-          f()
-        else
-          sync.finally f
-
-
-      _state = statue _state, update, (state)=>
+      _state = statue _state, sync.render, (state)=>
         _state = state
-        unless _rendering or _scheduled
-          _scheduled = true
-          sync.render patch_shadow
-        return
-
-
-      render_with = (props)=>
-        _rendering = true
-        if props
-          _state = _state._(_props = props)
-
-        patch_shadow()
+        do patch_shadow unless _rendering
         _rendering = false
         return
 
 `patch_shadow` is responsible for producing new virtual DOM and using
 `patch` method for shadow DOM mutation provided by
 [ShaDOM](https://github.com/playframe/shadom).
-Please make noted that we are cleaning and keeping `_v_root` node
-for fast equality pass when ShaDOM is mutating parent scrope of DOM.
-This makes our components rerendered only if something changes in their
-own state
 
       patch_shadow = =>
-        _scheduled = false
+        {patch} = _v_dom
+        _v_dom = view _state
+        _v_dom.patch = patch
+        patch _v_dom
+        return
 
-        new_v_dom = view _state
-
-        unless _v_root # first run
-          _v_root = new_v_dom
-          attr = _v_root[1] or= {}
-          attr.attachShadow or= mode: 'open'
-          attr.key or= Math.random()
-        else
-          unless _v_dom # second run
-            _v_dom = _v_root
-          else # third run
-            # freeing obsolete children
-            _v_root.length = 2
-
-          _v_root.patch new_v_dom, _v_dom
-          _v_dom = new_v_dom
-
+      render = =>
+        _v_dom = view _state
+        attr = _v_dom[1] or= {}
+        attr.attachShadow or= mode: 'open'
         return
 
 Here we create our `Component` function that mimics your `view`
-function. But first it's checking if `props` are meant to update
-components inner `_state`
+function. But first it's checking if `props` are meant to update `_state`
 
       Component = (props)=>
-        if _v_root
+        if _v_dom
           unless props is _props
             # shallow equality check
             for k, v of props when v isnt _state[k]
               # updating state with props and rendering
-              render_with props
+              _state = _state._ _props = props
+              _rendering = true
+              do render
               break
 
         else # first run
-          # will create _v_root
-          render_with props
+          _state = Object.assign _state._(), _props = props
+          do render
 
-        # always returning the same _v_root reference
-        # this will skip rerender with the rest of the app
-        _v_root
+        _v_dom
 
 Assigning high level methods from statue, adding instance to cache and our
 fresh `Component` is ready!
 
       Component._ = _state._
 
-      set view, state_actions, mkey, Component if mkey
-
+      _cache.set mkey, Component if mkey
 
       Component

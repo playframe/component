@@ -96,7 +96,7 @@
 
 // We are going to use [statue](https://github.com/playframe/statue)
 // for managing state of our Component
-var _cache, evolve, get, set, statue;
+var evolve, statue;
 
 evolve = require('@playframe/evolve');
 
@@ -106,96 +106,56 @@ statue = require('@playframe/statue');
 // [WeakMap](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap)
 // instances to cache our Component instances by `mkey`?
 // This allows us to cache our components aggresively because our `_cache`
-// will be cleaned automatically by Garbage Collector if `s_a`, `view` or
-// `mkey` gets dereferenced
-_cache = new WeakMap;
-
-get = (s_a, view, mkey) => {
-  var by_actions, by_view;
-  (by_actions = _cache.get(s_a)) || _cache.set(s_a, by_actions = new WeakMap);
-  (by_view = by_actions.get(view)) || by_actions.set(view, by_view = new WeakMap);
-  return by_view.get(mkey);
-};
-
-set = (s_a, view, mkey, Component) => {
-  return _cache.get(s_a).get(view).set(mkey, Component);
-};
+// will be cleaned automatically by Garbage Collector if `mkey` gets dereferenced
 
 // Let's export a higher order function that takes `sync` engine,
 // `state_actions` for statue and a pure `view` function.
 module.exports = (sync) => {
   return (state_actions) => {
     return (view) => {
+      var _cache;
+      _cache = new WeakMap;
       return (upgrade) => {
-        var Component, _props, _rendering, _scheduled, _state, _v_dom, _v_root, mkey, patch_shadow, render_with, update;
-        if ((mkey = upgrade && upgrade.mkey) && (Component = get(view, state_actions, mkey))) {
+        var Component, _props, _rendering, _state, _v_dom, mkey, patch_shadow, render;
+        if ((mkey = upgrade && upgrade.mkey) && (Component = _cache.get(mkey))) {
           return Component;
         }
-        _v_root = null;
         _v_dom = null;
         _props = null;
-        _scheduled = false;
         _rendering = false;
         _state = evolve(state_actions, upgrade);
         // Creating a statue that will deliver the latest state on
-        // `sync.finally` and will schedule render
-        update = (f) => {
-          if (_rendering) {
-            return f();
-          } else {
-            return sync.finally(f);
-          }
-        };
-        _state = statue(_state, update, (state) => {
+        // `sync.render` and patch shadow DOM if needed
+        _state = statue(_state, sync.render, (state) => {
           _state = state;
-          if (!(_rendering || _scheduled)) {
-            _scheduled = true;
-            sync.render(patch_shadow);
+          if (!_rendering) {
+            patch_shadow();
           }
-        });
-        render_with = (props) => {
-          _rendering = true;
-          if (props) {
-            _state = _state._(_props = props);
-          }
-          patch_shadow();
           _rendering = false;
-        };
+        });
         // `patch_shadow` is responsible for producing new virtual DOM and using
         // `patch` method for shadow DOM mutation provided by
         // [ShaDOM](https://github.com/playframe/shadom).
-        // Please make noted that we are cleaning and keeping `_v_root` node
-        // for fast equality pass when ShaDOM is mutating parent scrope of DOM.
-        // This makes our components rerendered only if something changes in their
-        // own state
         patch_shadow = () => {
-          var attr, new_v_dom;
-          _scheduled = false;
-          new_v_dom = view(_state);
-          if (!_v_root) { // first run
-            _v_root = new_v_dom;
-            attr = _v_root[1] || (_v_root[1] = {});
-            attr.attachShadow || (attr.attachShadow = {
-              mode: 'open'
-            });
-            attr.key || (attr.key = Math.random());
-          } else {
-            if (!_v_dom) { // second run
-              _v_dom = _v_root; // third run
-            } else {
-              // freeing obsolete children
-              _v_root.length = 2;
-            }
-            _v_root.patch(new_v_dom, _v_dom);
-            _v_dom = new_v_dom;
-          }
+          var patch;
+          ({patch} = _v_dom);
+          _v_dom = view(_state);
+          _v_dom.patch = patch;
+          patch(_v_dom);
+        };
+        render = () => {
+          var attr;
+          _v_dom = view(_state);
+          attr = _v_dom[1] || (_v_dom[1] = {});
+          attr.attachShadow || (attr.attachShadow = {
+            mode: 'open'
+          });
         };
         // Here we create our `Component` function that mimics your `view`
-        // function. But first it's checking if `props` are meant to update
-        // components inner `_state`
+        // function. But first it's checking if `props` are meant to update `_state`
         Component = (props) => {
           var k, v;
-          if (_v_root) {
+          if (_v_dom) {
             if (props !== _props) {
 // shallow equality check
               for (k in props) {
@@ -204,23 +164,23 @@ module.exports = (sync) => {
                   continue;
                 }
                 // updating state with props and rendering
-                render_with(props);
+                _state = _state._(_props = props);
+                _rendering = true;
+                render();
                 break; // first run
               }
             }
           } else {
-            // will create _v_root
-            render_with(props);
+            _state = Object.assign(_state._(), _props = props);
+            render();
           }
-          // always returning the same _v_root reference
-          // this will skip rerender with the rest of the app
-          return _v_root;
+          return _v_dom;
         };
         // Assigning high level methods from statue, adding instance to cache and our
         // fresh `Component` is ready!
         Component._ = _state._;
         if (mkey) {
-          set(view, state_actions, mkey, Component);
+          _cache.set(mkey, Component);
         }
         return Component;
       };
